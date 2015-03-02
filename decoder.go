@@ -1,6 +1,7 @@
 package drum
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"strings"
@@ -66,7 +67,6 @@ func DecodeFile(path string) (*Pattern, error) {
 		Tempo:   120,
 		Tracks:  tracks,
 	}
-	fmt.Println("p", p)
 	return p, nil
 }
 
@@ -83,4 +83,25 @@ type Pattern struct {
 	Version string
 	Tempo   int
 	Tracks  []Track
+}
+
+func (p *Pattern) String() string {
+	var b bytes.Buffer
+	b.Write([]byte(fmt.Sprintf("Saved with HW Version: %s\n", p.Version)))
+	b.Write([]byte(fmt.Sprintf("Tempo: %d\n", p.Tempo)))
+	for _, t := range p.Tracks {
+		b.Write([]byte(fmt.Sprintf("(%d) %s\t", t.Id, t.Name)))
+		for i, s := range t.Steps {
+			if i%4 == 0 {
+				b.Write([]byte("|"))
+			}
+			if s == '\x00' {
+				b.Write([]byte("-"))
+			} else {
+				b.Write([]byte("x"))
+			}
+		}
+		b.Write([]byte("|\n"))
+	}
+	return b.String()
 }
