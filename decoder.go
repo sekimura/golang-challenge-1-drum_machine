@@ -2,6 +2,7 @@ package drum
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"strings"
@@ -32,13 +33,19 @@ func DecodeFile(path string) (*Pattern, error) {
 	v := string(d[14:30])
 	version := v[:strings.Index(string(v), "\x00")]
 
-	// TODO: parse the Tempo part
-	tempo := int(d[48] >> 1)
+	dsize := int(d[13])
+
+	var tempo float32
+	buf := bytes.NewReader(d[46:50])
+	err = binary.Read(buf, binary.LittleEndian, &tempo)
+	if err != nil {
+		fmt.Println("binary.Read failed", err)
+	}
 
 	scanp := 50
 	var tracks []Track
 	for {
-		if scanp >= len(d) {
+		if scanp >= dsize {
 			break
 		}
 
@@ -82,16 +89,16 @@ type Track struct {
 // drum pattern contained in a .splice file.
 type Pattern struct {
 	Version string
-	Tempo   int
-	Tracks  []track
+	Tempo   float32
+	Tracks  []Track
 }
 
 func (p *Pattern) String() string {
 	var b bytes.Buffer
 	b.Write([]byte(fmt.Sprintf("Saved with HW Version: %s\n", p.Version)))
-	b.Write([]byte(fmt.Sprintf("Tempo: %d\n", p.Tempo)))
+	b.Write([]byte(fmt.Sprintf("Tempo: %v\n", p.Tempo)))
 	for _, t := range p.Tracks {
-		b.Write([]byte(fmt.Sprintf("(%d) %s\t", t.ID, t.Name)))
+		b.Write([]byte(fmt.Sprintf("(%v) %v\t", t.ID, t.Name)))
 		for i, s := range t.Steps {
 			if i%4 == 0 {
 				b.Write([]byte("|"))
