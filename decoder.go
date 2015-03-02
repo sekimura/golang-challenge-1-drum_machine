@@ -36,7 +36,7 @@ func DecodeFile(path string) (*Pattern, error) {
 	tempo := int(d[48] >> 1)
 
 	scanp := 50
-	var tracks []track
+	var tracks []Track
 	for {
 		if scanp >= len(d) {
 			break
@@ -55,7 +55,7 @@ func DecodeFile(path string) (*Pattern, error) {
 		steps := d[scanp : scanp+16]
 		scanp += 16
 
-		tracks = append(tracks, track{
+		tracks = append(tracks, Track{
 			ID:    id,
 			Name:  str,
 			Steps: steps,
@@ -70,7 +70,9 @@ func DecodeFile(path string) (*Pattern, error) {
 	return p, nil
 }
 
-type track struct {
+// Track is the low level representation of the
+// track steps contained in a .splice file.
+type Track struct {
 	ID    int
 	Name  string
 	Steps []byte
