@@ -19,7 +19,6 @@ func checkHeader(b []byte) error {
 // DecodeFile decodes the drum machine file found at the provided path
 // and returns a pointer to a parsed pattern which is the entry point to the
 // rest of the data.
-// TODO: implement
 func DecodeFile(path string) (*Pattern, error) {
 	d, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -34,9 +33,10 @@ func DecodeFile(path string) (*Pattern, error) {
 	version := v[:strings.Index(string(v), "\x00")]
 
 	// TODO: parse the Tempo part
+	tempo := int(d[48] >> 1)
 
 	scanp := 50
-	tracks := make([]Track, 0)
+	var tracks []track
 	for {
 		if scanp >= len(d) {
 			break
@@ -55,8 +55,8 @@ func DecodeFile(path string) (*Pattern, error) {
 		steps := d[scanp : scanp+16]
 		scanp += 16
 
-		tracks = append(tracks, Track{
-			Id:    id,
+		tracks = append(tracks, track{
+			ID:    id,
 			Name:  str,
 			Steps: steps,
 		})
@@ -64,25 +64,24 @@ func DecodeFile(path string) (*Pattern, error) {
 
 	p := &Pattern{
 		Version: version,
-		Tempo:   120,
+		Tempo:   tempo,
 		Tracks:  tracks,
 	}
 	return p, nil
 }
 
-// Pattern is the high level representation of the
-// drum pattern contained in a .splice file.
-// TODO: implement
-type Track struct {
-	Id    int
+type track struct {
+	ID    int
 	Name  string
 	Steps []byte
 }
 
+// Pattern is the high level representation of the
+// drum pattern contained in a .splice file.
 type Pattern struct {
 	Version string
 	Tempo   int
-	Tracks  []Track
+	Tracks  []track
 }
 
 func (p *Pattern) String() string {
@@ -90,7 +89,7 @@ func (p *Pattern) String() string {
 	b.Write([]byte(fmt.Sprintf("Saved with HW Version: %s\n", p.Version)))
 	b.Write([]byte(fmt.Sprintf("Tempo: %d\n", p.Tempo)))
 	for _, t := range p.Tracks {
-		b.Write([]byte(fmt.Sprintf("(%d) %s\t", t.Id, t.Name)))
+		b.Write([]byte(fmt.Sprintf("(%d) %s\t", t.ID, t.Name)))
 		for i, s := range t.Steps {
 			if i%4 == 0 {
 				b.Write([]byte("|"))
