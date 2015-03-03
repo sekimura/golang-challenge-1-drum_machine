@@ -4,83 +4,16 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
-	"strings"
+	"io"
+	"os"
 )
 
-var spliceHeader = "SPLICE"
-
-func checkHeader(b []byte) error {
-	if string(b[:len(spliceHeader)]) != spliceHeader {
-		return fmt.Errorf("drum: not a splice file")
-	}
-	return nil
-}
-
-// DecodeFile decodes the drum machine file found at the provided path
-// and returns a pointer to a parsed pattern which is the entry point to the
-// rest of the data.
-func DecodeFile(path string) (*Pattern, error) {
-	d, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := checkHeader(d); err != nil {
-		return nil, fmt.Errorf("drum: not a splice file")
-	}
-
-	v := string(d[14:30])
-	version := v[:strings.Index(string(v), "\x00")]
-
-	dsize := int(d[13])
-
-	var tempo float32
-	buf := bytes.NewReader(d[46:50])
-	err = binary.Read(buf, binary.LittleEndian, &tempo)
-	if err != nil {
-		fmt.Println("binary.Read failed", err)
-	}
-
-	scanp := 50
-	var tracks []Track
-	for {
-		if scanp >= dsize {
-			break
-		}
-
-		id := int(d[scanp])
-
-		// get the size of track name first
-		scanp += 4
-		s := int(d[scanp])
-		scanp++
-		// and scan string with the size
-		str := string(d[scanp : scanp+s])
-		scanp += s
-
-		steps := d[scanp : scanp+16]
-		scanp += 16
-
-		tracks = append(tracks, Track{
-			ID:    id,
-			Name:  str,
-			Steps: steps,
-		})
-	}
-
-	p := &Pattern{
-		Version: version,
-		Tempo:   tempo,
-		Tracks:  tracks,
-	}
-	return p, nil
-}
+const spliceHeader = "SPLICE"
 
 // Track is the low level representation of the
-// track steps contained in a .splice file.
+// each track contained in a .splice file.
 type Track struct {
-	ID    int
+	ID    uint32
 	Name  string
 	Steps []byte
 }
@@ -112,4 +45,162 @@ func (p *Pattern) String() string {
 		b.Write([]byte("|\n"))
 	}
 	return b.String()
+}
+
+// Decoding stage.
+// Header, Data Length, Version, Tempo and Tracks must appear in the order.
+const (
+	dsSeenHeader = iota
+	dsSeenDataLength
+	dsSeenVersion
+	dsSeenTempo
+	dsSeenTracks
+)
+
+type decoder struct {
+	r          io.Reader
+	p          Pattern
+	dataLength uint8
+	stage      int
+	tmp        [256]byte
+}
+
+// A FormatError reports that the input is not a valid Splice file
+type FormatError string
+
+func (e FormatError) Error() string { return "drum: invalid format: " + string(e) }
+
+func (d *decoder) checkHeader() error {
+	_, err := io.ReadFull(d.r, d.tmp[:len(spliceHeader)])
+	if err != nil {
+		return err
+	}
+	if string(d.tmp[:len(spliceHeader)]) != spliceHeader {
+		return FormatError("not a Splice file")
+	}
+	d.stage = dsSeenHeader
+	return nil
+}
+
+func (d *decoder) parse() error {
+	switch d.stage {
+	case dsSeenHeader:
+		if err := d.parseDataLength(); err != nil {
+			return err
+		}
+		d.stage = dsSeenDataLength
+	case dsSeenDataLength:
+		if err := d.parseVersion(); err != nil {
+			return err
+		}
+		d.stage = dsSeenVersion
+	case dsSeenVersion:
+		if err := d.parseTempo(); err != nil {
+			return err
+		}
+		d.stage = dsSeenTempo
+	case dsSeenTempo:
+		if err := d.parseTracks(); err != nil {
+			return err
+		}
+		d.stage = dsSeenTracks
+	}
+	return nil
+}
+
+func (d *decoder) parseDataLength() error {
+	_, err := io.ReadFull(d.r, d.tmp[:8])
+	if err != nil {
+		return err
+	}
+	d.dataLength = uint8(d.tmp[7])
+	return nil
+}
+
+func (d *decoder) parseVersion() error {
+	n, err := io.ReadFull(d.r, d.tmp[:32])
+	if err != nil {
+		return err
+	}
+	d.dataLength -= uint8(n)
+
+	i := bytes.Index(d.tmp[:32], []byte{0x00})
+	d.p.Version = string(d.tmp[:i])
+	return nil
+}
+
+func (d *decoder) parseTempo() error {
+	n, err := io.ReadFull(d.r, d.tmp[:4])
+	if err != nil {
+		return err
+	}
+	d.dataLength -= uint8(n)
+
+	var tempo float32
+	buf := bytes.NewReader(d.tmp[:4])
+	err = binary.Read(buf, binary.LittleEndian, &tempo)
+	if err != nil {
+		fmt.Println("binary.Read failed", err)
+	}
+	d.p.Tempo = tempo
+	return nil
+}
+
+func (d *decoder) parseTracks() error {
+	_, err := io.ReadFull(d.r, d.tmp[:d.dataLength])
+	if err != nil {
+		return err
+	}
+
+	i := 0
+	var tracks []Track
+	for {
+		if i >= int(d.dataLength) {
+			break
+		}
+
+		var id uint32
+		buf := bytes.NewReader(d.tmp[i:(i + 4)])
+		err = binary.Read(buf, binary.LittleEndian, &id)
+		i += 4
+
+		nameLength := int(d.tmp[i])
+		i++
+
+		name := string(d.tmp[i:(i + nameLength)])
+		i += nameLength
+
+		steps := d.tmp[i : i+16]
+		i += 16
+
+		tracks = append(tracks, Track{
+			ID:    id,
+			Name:  name,
+			Steps: steps,
+		})
+	}
+	d.p.Tracks = tracks
+
+	return nil
+}
+
+// DecodeFile decodes the drum machine file found at the provided path
+// and returns a pointer to a parsed pattern which is the entry point to the
+// rest of the data.
+func DecodeFile(path string) (*Pattern, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+
+	d := &decoder{r: f}
+	if err := d.checkHeader(); err != nil {
+		return nil, err
+	}
+	for d.stage != dsSeenTracks {
+		if err := d.parse(); err != nil {
+			return nil, err
+		}
+	}
+	return &d.p, nil
 }
